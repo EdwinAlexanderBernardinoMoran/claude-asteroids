@@ -326,11 +326,19 @@ class PowerUp {
     if (this.ttl < 2 && Math.floor(this.ttl * 8) % 2 === 0) return;
     const color = this.type === 'shield' ? '#4da6ff' : this.type === 'slowmo' ? '#c770ff' : this.type === 'nova' ? '#ff3b3b' : this.type === 'hyper' ? '#ffee00' : '#0ff';
     const label = this.type === 'shield' ? 'S' : this.type === 'slowmo' ? 'Z' : this.type === 'nova' ? 'N' : this.type === 'hyper' ? 'H' : '3';
+    // Lados de polígono por tipo: triángulo=triple, rombo=slowmo, hexágono=shield, octágono=nova, pentágono=hyper
+    const sides = this.type === 'shield' ? 6 : this.type === 'slowmo' ? 4 : this.type === 'nova' ? 8 : this.type === 'hyper' ? 5 : 3;
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, TAU);
+    for (let i = 0; i < sides; i++) {
+      const a = (i / sides) * TAU - Math.PI / 2;
+      const px = this.x + Math.cos(a) * this.radius;
+      const py = this.y + Math.sin(a) * this.radius;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
     ctx.stroke();
     ctx.fillStyle = color;
     ctx.font = 'bold 12px monospace';
@@ -346,7 +354,8 @@ let ship, bullets, asteroids, particles, powerUps;
 let score, lives, level;
 let state;      // State.PLAYING | State.DEAD | State.GAMEOVER
 let deadTimer;
-let powerUpSpawned;
+let powerUpTypesSpawned;
+const POWERUP_TYPES = ['triple', 'shield', 'slowmo', 'nova', 'hyper'];
 
 function spawnAsteroids(count) {
   for (let i = 0; i < count; i++) {
@@ -365,7 +374,7 @@ function initGame() {
   asteroids = [];
   particles = [];
   powerUps  = [];
-  powerUpSpawned = false;
+  powerUpTypesSpawned = new Set();
   score  = 0;
   lives  = START_LIVES;
   level  = 1;
@@ -462,16 +471,16 @@ function update(dt) {
         score += POINTS[a.size];
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
-        if (!powerUpSpawned && Math.random() < POWERUP_CHANCE) {
+        const remainingTypes = POWERUP_TYPES.filter(t => !powerUpTypesSpawned.has(t));
+        if (remainingTypes.length > 0 && Math.random() < POWERUP_CHANCE) {
           let type;
-          if (ship.novaBombs === 0 && Math.random() < NOVA_CHANCE) {
+          if (remainingTypes.includes('nova') && ship.novaBombs === 0 && Math.random() < NOVA_CHANCE) {
             type = 'nova';
           } else {
-            const roll = Math.random();
-            type = roll < 0.25 ? 'triple' : roll < 0.5 ? 'shield' : roll < 0.75 ? 'slowmo' : 'hyper';
+            type = remainingTypes[randInt(0, remainingTypes.length - 1)];
           }
           powerUps.push(new PowerUp(a.x, a.y, type));
-          powerUpSpawned = true;
+          powerUpTypesSpawned.add(type);
         }
       }
     }
