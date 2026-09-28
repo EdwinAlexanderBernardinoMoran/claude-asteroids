@@ -30,6 +30,8 @@ const TRIPLE_SHOT_TIME = 5;    // s que dura el efecto tras recogerlo
 const TRIPLE_SPREAD    = 0.22; // rad de abanico entre balas
 const SHIELD_TIME      = 5;    // s que dura el escudo tras recogerlo
 const SHIELD_MARGIN    = 6;    // px que el escudo sobresale del radio de la nave
+const SLOWMO_TIME      = 6;    // s que dura el efecto tras recogerlo
+const SLOWMO_FACTOR    = 0.5;  // multiplicador de velocidad de asteroides durante el efecto
 
 const State = Object.freeze({ PLAYING: 'playing', DEAD: 'dead', GAMEOVER: 'gameover' });
 
@@ -153,6 +155,7 @@ class Ship {
   constructor() {
     this.tripleShot = 0; // sobrevive a reset() (cambio de nivel)
     this.shield     = 0; // sobrevive a reset() (cambio de nivel)
+    this.slowMo     = 0; // sobrevive a reset() (cambio de nivel)
     this.reset();
   }
 
@@ -175,6 +178,7 @@ class Ship {
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
     if (this.tripleShot    > 0) this.tripleShot    -= dt;
     if (this.shield        > 0) this.shield        -= dt;
+    if (this.slowMo        > 0) this.slowMo        -= dt;
 
     if (keys['ArrowLeft'])  this.angle -= SHIP_ROT * dt;
     if (keys['ArrowRight']) this.angle += SHIP_ROT * dt;
@@ -294,7 +298,7 @@ class PowerUp {
   constructor(x, y, type = 'triple') {
     this.x = x;
     this.y = y;
-    this.type = type; // 'triple' | 'shield'
+    this.type = type; // 'triple' | 'shield' | 'slowmo'
     const angle = rand(0, TAU);
     this.vx = Math.cos(angle) * POWERUP_SPEED;
     this.vy = Math.sin(angle) * POWERUP_SPEED;
@@ -312,8 +316,8 @@ class PowerUp {
 
   draw() {
     if (this.ttl < 2 && Math.floor(this.ttl * 8) % 2 === 0) return;
-    const color = this.type === 'shield' ? '#4da6ff' : '#0ff';
-    const label = this.type === 'shield' ? 'S' : '3';
+    const color = this.type === 'shield' ? '#4da6ff' : this.type === 'slowmo' ? '#c770ff' : '#0ff';
+    const label = this.type === 'shield' ? 'S' : this.type === 'slowmo' ? 'Z' : '3';
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
@@ -378,6 +382,7 @@ function killShip() {
   ship.dead = true;
   ship.tripleShot = 0;
   ship.shield = 0;
+  ship.slowMo = 0;
   lives--;
   if (lives <= 0) {
     state = State.GAMEOVER;
@@ -400,7 +405,8 @@ function update(dt) {
     deadTimer -= dt;
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
-    asteroids.forEach(a => a.update(dt));
+    const asteroidDt = ship.slowMo > 0 ? dt * SLOWMO_FACTOR : dt;
+    asteroids.forEach(a => a.update(asteroidDt));
     powerUps.forEach(p => p.update(dt));
     powerUps = powerUps.filter(p => !p.dead);
     if (deadTimer <= 0) { state = State.PLAYING; ship.reset(); }
@@ -414,7 +420,8 @@ function update(dt) {
 
   ship.update(dt);
   bullets.forEach(b => b.update(dt));
-  asteroids.forEach(a => a.update(dt));
+  const asteroidDt = ship.slowMo > 0 ? dt * SLOWMO_FACTOR : dt;
+  asteroids.forEach(a => a.update(asteroidDt));
   particles.forEach(p => p.update(dt));
   powerUps.forEach(p => p.update(dt));
 
@@ -433,7 +440,8 @@ function update(dt) {
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
         if (!powerUpSpawned && Math.random() < POWERUP_CHANCE) {
-          const type = Math.random() < 0.5 ? 'triple' : 'shield';
+          const roll = Math.random();
+          const type = roll < 1 / 3 ? 'triple' : roll < 2 / 3 ? 'shield' : 'slowmo';
           powerUps.push(new PowerUp(a.x, a.y, type));
           powerUpSpawned = true;
         }
@@ -448,6 +456,7 @@ function update(dt) {
     if (!p.dead && dist(ship, p) < ship.radius + p.radius) {
       p.dead = true;
       if (p.type === 'shield') ship.shield = SHIELD_TIME;
+      else if (p.type === 'slowmo') ship.slowMo = SLOWMO_TIME;
       else ship.tripleShot = TRIPLE_SHOT_TIME;
       explode(p.x, p.y, 6);
     }
@@ -512,6 +521,13 @@ function drawHUD() {
     ctx.fillStyle = '#4da6ff';
     const y = ship.tripleShot > 0 ? 66 : 46;
     ctx.fillText(`ESCUDO ${Math.ceil(ship.shield)}s`, 14, y);
+    ctx.fillStyle = '#fff';
+  }
+
+  if (ship.slowMo > 0) {
+    ctx.fillStyle = '#c770ff';
+    const y = 46 + (ship.tripleShot > 0 ? 20 : 0) + (ship.shield > 0 ? 20 : 0);
+    ctx.fillText(`SLOWMO ${Math.ceil(ship.slowMo)}s`, 14, y);
     ctx.fillStyle = '#fff';
   }
 
