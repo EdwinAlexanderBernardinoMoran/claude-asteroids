@@ -32,6 +32,7 @@ const SHIELD_TIME      = 5;    // s que dura el escudo tras recogerlo
 const SHIELD_MARGIN    = 6;    // px que el escudo sobresale del radio de la nave
 const SLOWMO_TIME      = 6;    // s que dura el efecto tras recogerlo
 const SLOWMO_FACTOR    = 0.5;  // multiplicador de velocidad de asteroides durante el efecto
+const NOVA_CHANCE      = 0.2;  // prob. de que el power-up generado sea Nova (vs. triple/escudo/slowmo)
 
 const State = Object.freeze({ PLAYING: 'playing', DEAD: 'dead', GAMEOVER: 'gameover' });
 
@@ -156,6 +157,7 @@ class Ship {
     this.tripleShot = 0; // sobrevive a reset() (cambio de nivel)
     this.shield     = 0; // sobrevive a reset() (cambio de nivel)
     this.slowMo     = 0; // sobrevive a reset() (cambio de nivel)
+    this.novaBombs  = 0; // sobrevive a reset() (cambio de nivel)
     this.reset();
   }
 
@@ -298,7 +300,7 @@ class PowerUp {
   constructor(x, y, type = 'triple') {
     this.x = x;
     this.y = y;
-    this.type = type; // 'triple' | 'shield' | 'slowmo'
+    this.type = type; // 'triple' | 'shield' | 'slowmo' | 'nova'
     const angle = rand(0, TAU);
     this.vx = Math.cos(angle) * POWERUP_SPEED;
     this.vy = Math.sin(angle) * POWERUP_SPEED;
@@ -316,8 +318,8 @@ class PowerUp {
 
   draw() {
     if (this.ttl < 2 && Math.floor(this.ttl * 8) % 2 === 0) return;
-    const color = this.type === 'shield' ? '#4da6ff' : this.type === 'slowmo' ? '#c770ff' : '#0ff';
-    const label = this.type === 'shield' ? 'S' : this.type === 'slowmo' ? 'Z' : '3';
+    const color = this.type === 'shield' ? '#4da6ff' : this.type === 'slowmo' ? '#c770ff' : this.type === 'nova' ? '#ff3b3b' : '#0ff';
+    const label = this.type === 'shield' ? 'S' : this.type === 'slowmo' ? 'Z' : this.type === 'nova' ? 'N' : '3';
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
@@ -377,6 +379,15 @@ function explode(x, y, count = 8) {
   for (let i = 0; i < count; i++) particles.push(new Particle(x, y));
 }
 
+function triggerNova() {
+  ship.novaBombs--;
+  for (const a of asteroids) {
+    score += POINTS[a.size];
+    explode(a.x, a.y, a.size * 5);
+  }
+  asteroids = [];
+}
+
 function killShip() {
   explode(ship.x, ship.y, 14);
   ship.dead = true;
@@ -418,6 +429,11 @@ function update(dt) {
     bullets.push(...ship.tryShoot());
   }
 
+  // Bomba Nova
+  if (pressed('KeyB') && ship.novaBombs > 0 && !ship.dead) {
+    triggerNova();
+  }
+
   ship.update(dt);
   bullets.forEach(b => b.update(dt));
   const asteroidDt = ship.slowMo > 0 ? dt * SLOWMO_FACTOR : dt;
@@ -440,8 +456,13 @@ function update(dt) {
         explode(a.x, a.y, a.size * 5);
         newAsteroids.push(...a.split());
         if (!powerUpSpawned && Math.random() < POWERUP_CHANCE) {
-          const roll = Math.random();
-          const type = roll < 1 / 3 ? 'triple' : roll < 2 / 3 ? 'shield' : 'slowmo';
+          let type;
+          if (ship.novaBombs === 0 && Math.random() < NOVA_CHANCE) {
+            type = 'nova';
+          } else {
+            const roll = Math.random();
+            type = roll < 1 / 3 ? 'triple' : roll < 2 / 3 ? 'shield' : 'slowmo';
+          }
           powerUps.push(new PowerUp(a.x, a.y, type));
           powerUpSpawned = true;
         }
@@ -457,6 +478,7 @@ function update(dt) {
       p.dead = true;
       if (p.type === 'shield') ship.shield = SHIELD_TIME;
       else if (p.type === 'slowmo') ship.slowMo = SLOWMO_TIME;
+      else if (p.type === 'nova') ship.novaBombs++;
       else ship.tripleShot = TRIPLE_SHOT_TIME;
       explode(p.x, p.y, 6);
     }
@@ -528,6 +550,13 @@ function drawHUD() {
     ctx.fillStyle = '#c770ff';
     const y = 46 + (ship.tripleShot > 0 ? 20 : 0) + (ship.shield > 0 ? 20 : 0);
     ctx.fillText(`SLOWMO ${Math.ceil(ship.slowMo)}s`, 14, y);
+    ctx.fillStyle = '#fff';
+  }
+
+  if (ship.novaBombs > 0) {
+    ctx.fillStyle = '#ff3b3b';
+    const y = 46 + (ship.tripleShot > 0 ? 20 : 0) + (ship.shield > 0 ? 20 : 0) + (ship.slowMo > 0 ? 20 : 0);
+    ctx.fillText(`NOVA x${ship.novaBombs} [B]`, 14, y);
     ctx.fillStyle = '#fff';
   }
 
