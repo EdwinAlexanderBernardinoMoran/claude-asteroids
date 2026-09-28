@@ -8,7 +8,7 @@ A clone of the classic arcade game **Asteroids**, implemented in pure HTML5 Canv
 
 ## Running the game
 
-Open `index.html` directly in a browser, or serve it locally:
+`game.js` is loaded as an ES module (`<script type="module">`), so it must be served over HTTP — opening `index.html` directly via `file://` will fail with a CORS/module error in Chrome. Serve it locally:
 
 ```bash
 npx serve .
@@ -23,7 +23,7 @@ There is no build step, package.json, linter, or test suite — it's plain stati
 - **Input** — `keys`/`justPressed` maps populated by `keydown`/`keyup` listeners; `pressed(code)` consumes a one-shot press (e.g. for firing) while `keys[code]` reflects held-down state (e.g. for rotation/thrust).
 - **Utils** — `wrap` (toroidal position wrapping), `dist`, `rand`, `randInt`.
 - **Entity classes** — `Bullet`, `Asteroid`, `Ship`, `Particle`. Each has `update(dt)` and `draw()`; entities mark themselves `dead = true` rather than removing themselves from arrays.
-- **Game state** — module-level `let` variables (`ship`, `bullets`, `asteroids`, `particles`, `score`, `lives`, `level`, `state`) rather than a state object/class. `state` is one of `'playing' | 'dead' | 'gameover'`.
+- **Game state** — module-level `let` variables (`ship`, `bullets`, `asteroids`, `particles`, `score`, `lives`, `level`, `state`) rather than a state object/class. `state` is one of the `State` enum values (`State.PLAYING`, `State.DEAD`, `State.GAMEOVER`).
 - **`update(dt)`** — branches on `state` first, then: reads input to fire, updates all entities, filters dead entities out of arrays, does bullet↔asteroid and ship↔asteroid collision (`dist(a, b) < combined radius`), splits destroyed asteroids into two smaller ones via `Asteroid.split()`, and advances to `nextLevel()` when `asteroids.length === 0`.
 - **`draw()`** — clears canvas, draws particles → asteroids → bullets → ship (back-to-front), then HUD/overlays.
 - **Main loop** — `requestAnimationFrame(loop)` computes `dt` (clamped to 0.05s max) and calls `update(dt)` then `draw()`.

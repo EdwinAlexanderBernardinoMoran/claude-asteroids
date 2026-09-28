@@ -1,22 +1,43 @@
-'use strict';
-
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const W = 800;
 const H = 600;
+const TAU = Math.PI * 2;
+
+// ── Constantes de juego ───────────────────────────────────────────────────────
+const MAX_DT           = 0.05;  // clamp del loop principal (s)
+const START_LIVES      = 3;
+const SPAWN_INVINCIBLE = 3;     // s de invencibilidad al reaparecer
+const SAFE_DIST        = 130;   // radio libre de asteroides al spawnear
+const DEAD_PAUSE       = 2;     // s de pausa tras morir
+
+const BULLET_SPEED = 520;
+const BULLET_TTL   = 1.1;
+const BULLET_RADIUS = 2;
+
+const SHIP_ROT       = 3.5;   // rad/s
+const SHIP_THRUST    = 260;   // px/s²
+const SHIP_DRAG      = 0.987; // factor de fricción por frame @60Hz
+const SHIP_RADIUS    = 12;
+const SHIP_NOSE      = 21;    // distancia del cañón a la nariz
+const SHOOT_COOLDOWN = 0.2;
+
+const State = Object.freeze({ PLAYING: 'playing', DEAD: 'dead', GAMEOVER: 'gameover' });
 
 // ── Input ─────────────────────────────────────────────────────────────────────
-
 const keys = {};
 const justPressed = {};
 
 window.addEventListener('keydown', e => {
-  justPressed[e.code] = !keys[e.code];
+  justPressed[e.code] = !e.repeat;
   keys[e.code] = true;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code))
     e.preventDefault();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
+window.addEventListener('blur', () => {
+  for (const code in keys) keys[code] = false;
+});
 
 function pressed(code) {
   const val = justPressed[code];
@@ -35,11 +56,10 @@ class Bullet {
   constructor(x, y, angle) {
     this.x = x;
     this.y = y;
-    const SPEED = 520;
-    this.vx = Math.cos(angle) * SPEED;
-    this.vy = Math.sin(angle) * SPEED;
-    this.ttl  = 1.1;
-    this.radius = 2;
+    this.vx = Math.cos(angle) * BULLET_SPEED;
+    this.vy = Math.sin(angle) * BULLET_SPEED;
+    this.ttl  = BULLET_TTL;
+    this.radius = BULLET_RADIUS;
     this.dead = false;
   }
 
@@ -53,7 +73,7 @@ class Bullet {
   draw() {
     ctx.fillStyle = '#fff';
     ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.arc(this.x, this.y, this.radius, 0, TAU);
     ctx.fill();
   }
 }
@@ -71,18 +91,18 @@ class Asteroid {
     this.radius = RADII[size];
     this.dead = false;
 
-    const angle = rand(0, Math.PI * 2);
+    const angle = rand(0, TAU);
     const speed = SPEEDS[size] + rand(-15, 15);
     this.vx = Math.cos(angle) * speed;
     this.vy = Math.sin(angle) * speed;
     this.rotSpeed = rand(-1.2, 1.2);
-    this.rot = rand(0, Math.PI * 2);
+    this.rot = rand(0, TAU);
 
     // Polígono irregular
     const n = randInt(8, 13);
     this.verts = [];
     for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2;
+      const a = (i / n) * TAU;
       const r = this.radius * rand(0.6, 1.0);
       this.verts.push([Math.cos(a) * r, Math.sin(a) * r]);
     }
@@ -129,9 +149,9 @@ class Ship {
     this.angle  = -Math.PI / 2;
     this.vx     = 0;
     this.vy     = 0;
-    this.radius = 12;
+    this.radius = SHIP_RADIUS;
     this.thrusting     = false;
-    this.invincible    = 3;
+    this.invincible    = SPAWN_INVINCIBLE;
     this.shootCooldown = 0;
     this.dead          = false;
   }
@@ -141,31 +161,29 @@ class Ship {
     if (this.invincible    > 0) this.invincible    -= dt;
     if (this.shootCooldown > 0) this.shootCooldown -= dt;
 
-    const ROT   = 3.5;   // rad/s
-    const THRUST = 260;  // px/s²
-    const DRAG   = 0.987;
-
-    if (keys['ArrowLeft'])  this.angle -= ROT * dt;
-    if (keys['ArrowRight']) this.angle += ROT * dt;
+    if (keys['ArrowLeft'])  this.angle -= SHIP_ROT * dt;
+    if (keys['ArrowRight']) this.angle += SHIP_ROT * dt;
 
     this.thrusting = !!keys['ArrowUp'];
     if (this.thrusting) {
-      this.vx += Math.cos(this.angle) * THRUST * dt;
-      this.vy += Math.sin(this.angle) * THRUST * dt;
+      this.vx += Math.cos(this.angle) * SHIP_THRUST * dt;
+      this.vy += Math.sin(this.angle) * SHIP_THRUST * dt;
     }
 
-    this.vx *= DRAG;
-    this.vy *= DRAG;
+    // Fricción independiente de la tasa de refresco: SHIP_DRAG está calibrado
+    // para 60 Hz, así que se escala al dt real en vez de aplicarse por frame.
+    const drag = SHIP_DRAG ** (dt * 60);
+    this.vx *= drag;
+    this.vy *= drag;
     this.x = wrap(this.x + this.vx * dt, W);
     this.y = wrap(this.y + this.vy * dt, H);
   }
 
   tryShoot() {
     if (this.shootCooldown > 0 || this.dead) return [];
-    this.shootCooldown = 0.2;
-    const NOSE = 21;
-    const ox = this.x + Math.cos(this.angle) * NOSE;
-    const oy = this.y + Math.sin(this.angle) * NOSE;
+    this.shootCooldown = SHOOT_COOLDOWN;
+    const ox = this.x + Math.cos(this.angle) * SHIP_NOSE;
+    const oy = this.y + Math.sin(this.angle) * SHIP_NOSE;
     return [new Bullet(ox, oy, this.angle)];
   }
 
@@ -209,7 +227,7 @@ class Particle {
   constructor(x, y) {
     this.x  = x;
     this.y  = y;
-    const angle = rand(0, Math.PI * 2);
+    const angle = rand(0, TAU);
     const speed = rand(30, 130);
     this.vx   = Math.cos(angle) * speed;
     this.vy   = Math.sin(angle) * speed;
@@ -226,24 +244,25 @@ class Particle {
   }
 
   draw() {
-    const alpha = this.ttl / this.life;
-    ctx.strokeStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+    ctx.save();
+    ctx.globalAlpha = this.ttl / this.life;
+    ctx.strokeStyle = '#fff';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(this.x, this.y);
     ctx.lineTo(this.x - this.vx * 0.05, this.y - this.vy * 0.05);
     ctx.stroke();
+    ctx.restore();
   }
 }
 
 // ── Estado del juego ──────────────────────────────────────────────────────────
 let ship, bullets, asteroids, particles;
 let score, lives, level;
-let state;      // 'playing' | 'dead' | 'gameover'
+let state;      // State.PLAYING | State.DEAD | State.GAMEOVER
 let deadTimer;
 
 function spawnAsteroids(count) {
-  const SAFE_DIST = 130;
   for (let i = 0; i < count; i++) {
     let x, y;
     do {
@@ -260,9 +279,9 @@ function initGame() {
   asteroids = [];
   particles = [];
   score  = 0;
-  lives  = 3;
+  lives  = START_LIVES;
   level  = 1;
-  state  = 'playing';
+  state  = State.PLAYING;
   spawnAsteroids(4);
 }
 
@@ -283,28 +302,28 @@ function killShip() {
   ship.dead = true;
   lives--;
   if (lives <= 0) {
-    state = 'gameover';
+    state = State.GAMEOVER;
   } else {
-    state     = 'dead';
-    deadTimer = 2;
+    state     = State.DEAD;
+    deadTimer = DEAD_PAUSE;
   }
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
 function update(dt) {
-  if (state === 'gameover') {
+  if (state === State.GAMEOVER) {
     if (pressed('Space')) initGame();
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
     return;
   }
 
-  if (state === 'dead') {
+  if (state === State.DEAD) {
     deadTimer -= dt;
     particles.forEach(p => p.update(dt));
     particles = particles.filter(p => !p.dead);
     asteroids.forEach(a => a.update(dt));
-    if (deadTimer <= 0) { state = 'playing'; ship.reset(); }
+    if (deadTimer <= 0) { state = State.PLAYING; ship.reset(); }
     return;
   }
 
@@ -405,20 +424,34 @@ function draw() {
 
   drawHUD();
 
-  if (state === 'gameover')
+  if (state === State.GAMEOVER)
     drawOverlay('GAME OVER', `PUNTAJE: ${score}   —   ESPACIO PARA REINICIAR`);
+}
+
+// ── HiDPI ─────────────────────────────────────────────────────────────────────
+// El backing store del canvas se escala al devicePixelRatio para que los
+// trazos no se vean borrosos en pantallas retina/4K; la lógica de juego
+// sigue trabajando en coordenadas lógicas W×H.
+function setupCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = `${W}px`;
+  canvas.style.height = `${H}px`;
+  ctx.scale(dpr, dpr);
 }
 
 // ── Loop principal ────────────────────────────────────────────────────────────
 let lastTime = null;
 
 function loop(ts) {
-  const dt = lastTime === null ? 0 : Math.min((ts - lastTime) / 1000, 0.05);
+  const dt = lastTime === null ? 0 : Math.min((ts - lastTime) / 1000, MAX_DT);
   lastTime = ts;
   update(dt);
   draw();
   requestAnimationFrame(loop);
 }
 
+setupCanvas();
 initGame();
 requestAnimationFrame(loop);
