@@ -32,7 +32,9 @@ const SHIELD_TIME      = 5;    // s que dura el escudo tras recogerlo
 const SHIELD_MARGIN    = 6;    // px que el escudo sobresale del radio de la nave
 const SLOWMO_TIME      = 6;    // s que dura el efecto tras recogerlo
 const SLOWMO_FACTOR    = 0.5;  // multiplicador de velocidad de asteroides durante el efecto
-const NOVA_CHANCE      = 0.2;  // prob. de que el power-up generado sea Nova (vs. triple/escudo/slowmo)
+const NOVA_CHANCE      = 0.2;  // prob. de que el power-up generado sea Nova (vs. triple/escudo/slowmo/hiper)
+const HYPER_TIME       = 8;    // s que dura el efecto tras recogerlo
+const HYPER_THRUST_MULT = 2.5; // multiplicador de aceleración (y por ende velocidad máx.) durante el efecto
 
 const State = Object.freeze({ PLAYING: 'playing', DEAD: 'dead', GAMEOVER: 'gameover' });
 
@@ -158,6 +160,7 @@ class Ship {
     this.shield     = 0; // sobrevive a reset() (cambio de nivel)
     this.slowMo     = 0; // sobrevive a reset() (cambio de nivel)
     this.novaBombs  = 0; // sobrevive a reset() (cambio de nivel)
+    this.hyper      = 0; // sobrevive a reset() (cambio de nivel)
     this.reset();
   }
 
@@ -181,14 +184,16 @@ class Ship {
     if (this.tripleShot    > 0) this.tripleShot    -= dt;
     if (this.shield        > 0) this.shield        -= dt;
     if (this.slowMo        > 0) this.slowMo        -= dt;
+    if (this.hyper         > 0) this.hyper         -= dt;
 
     if (keys['ArrowLeft'])  this.angle -= SHIP_ROT * dt;
     if (keys['ArrowRight']) this.angle += SHIP_ROT * dt;
 
     this.thrusting = !!keys['ArrowUp'];
     if (this.thrusting) {
-      this.vx += Math.cos(this.angle) * SHIP_THRUST * dt;
-      this.vy += Math.sin(this.angle) * SHIP_THRUST * dt;
+      const thrust = this.hyper > 0 ? SHIP_THRUST * HYPER_THRUST_MULT : SHIP_THRUST;
+      this.vx += Math.cos(this.angle) * thrust * dt;
+      this.vy += Math.sin(this.angle) * thrust * dt;
     }
 
     // Fricción independiente de la tasa de refresco: SHIP_DRAG está calibrado
@@ -238,11 +243,12 @@ class Ship {
 
     // Llama del propulsor
     if (this.thrusting && Math.random() > 0.35) {
+      const flameLen = this.hyper > 0 ? rand(12, 26) : rand(6, 14);
       ctx.beginPath();
       ctx.moveTo(-8, -4);
-      ctx.lineTo(-8 - rand(6, 14), 0);
+      ctx.lineTo(-8 - flameLen, 0);
       ctx.lineTo(-8,  4);
-      ctx.strokeStyle = 'rgba(255, 130, 0, 0.85)';
+      ctx.strokeStyle = this.hyper > 0 ? 'rgba(255, 238, 0, 0.9)' : 'rgba(255, 130, 0, 0.85)';
       ctx.stroke();
     }
 
@@ -300,7 +306,7 @@ class PowerUp {
   constructor(x, y, type = 'triple') {
     this.x = x;
     this.y = y;
-    this.type = type; // 'triple' | 'shield' | 'slowmo' | 'nova'
+    this.type = type; // 'triple' | 'shield' | 'slowmo' | 'nova' | 'hyper'
     const angle = rand(0, TAU);
     this.vx = Math.cos(angle) * POWERUP_SPEED;
     this.vy = Math.sin(angle) * POWERUP_SPEED;
@@ -318,8 +324,8 @@ class PowerUp {
 
   draw() {
     if (this.ttl < 2 && Math.floor(this.ttl * 8) % 2 === 0) return;
-    const color = this.type === 'shield' ? '#4da6ff' : this.type === 'slowmo' ? '#c770ff' : this.type === 'nova' ? '#ff3b3b' : '#0ff';
-    const label = this.type === 'shield' ? 'S' : this.type === 'slowmo' ? 'Z' : this.type === 'nova' ? 'N' : '3';
+    const color = this.type === 'shield' ? '#4da6ff' : this.type === 'slowmo' ? '#c770ff' : this.type === 'nova' ? '#ff3b3b' : this.type === 'hyper' ? '#ffee00' : '#0ff';
+    const label = this.type === 'shield' ? 'S' : this.type === 'slowmo' ? 'Z' : this.type === 'nova' ? 'N' : this.type === 'hyper' ? 'H' : '3';
     ctx.save();
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
@@ -394,6 +400,7 @@ function killShip() {
   ship.tripleShot = 0;
   ship.shield = 0;
   ship.slowMo = 0;
+  ship.hyper = 0;
   lives--;
   if (lives <= 0) {
     state = State.GAMEOVER;
@@ -461,7 +468,7 @@ function update(dt) {
             type = 'nova';
           } else {
             const roll = Math.random();
-            type = roll < 1 / 3 ? 'triple' : roll < 2 / 3 ? 'shield' : 'slowmo';
+            type = roll < 0.25 ? 'triple' : roll < 0.5 ? 'shield' : roll < 0.75 ? 'slowmo' : 'hyper';
           }
           powerUps.push(new PowerUp(a.x, a.y, type));
           powerUpSpawned = true;
@@ -479,6 +486,7 @@ function update(dt) {
       if (p.type === 'shield') ship.shield = SHIELD_TIME;
       else if (p.type === 'slowmo') ship.slowMo = SLOWMO_TIME;
       else if (p.type === 'nova') ship.novaBombs++;
+      else if (p.type === 'hyper') ship.hyper = HYPER_TIME;
       else ship.tripleShot = TRIPLE_SHOT_TIME;
       explode(p.x, p.y, 6);
     }
@@ -553,9 +561,16 @@ function drawHUD() {
     ctx.fillStyle = '#fff';
   }
 
+  if (ship.hyper > 0) {
+    ctx.fillStyle = '#ffee00';
+    const y = 46 + (ship.tripleShot > 0 ? 20 : 0) + (ship.shield > 0 ? 20 : 0) + (ship.slowMo > 0 ? 20 : 0);
+    ctx.fillText(`HIPER ${Math.ceil(ship.hyper)}s`, 14, y);
+    ctx.fillStyle = '#fff';
+  }
+
   if (ship.novaBombs > 0) {
     ctx.fillStyle = '#ff3b3b';
-    const y = 46 + (ship.tripleShot > 0 ? 20 : 0) + (ship.shield > 0 ? 20 : 0) + (ship.slowMo > 0 ? 20 : 0);
+    const y = 46 + (ship.tripleShot > 0 ? 20 : 0) + (ship.shield > 0 ? 20 : 0) + (ship.slowMo > 0 ? 20 : 0) + (ship.hyper > 0 ? 20 : 0);
     ctx.fillText(`NOVA x${ship.novaBombs} [B]`, 14, y);
     ctx.fillStyle = '#fff';
   }
